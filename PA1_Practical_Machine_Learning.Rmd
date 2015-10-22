@@ -1,0 +1,368 @@
+---
+        title: "Practical Machine Learning: Peer Assessment"
+
+        output: 
+         html_document:
+         keep_md: true
+---
+
+
+## Human Activity Recognition Study based on a Weight Lifting Exercises Dataset
+##         
+## Synopsis
+
+## In this report we will analyze data about personal activity. The data is derived from accelerometers on the belt, forearm, arm, and dumbbell of six young healthy participants who were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D), and throwing the hips to the front (Class E).
+
+## The main study objective is to provide an answer to the questions:
+## In which manner did the participants do the exercise? (This is shown in the "classe" variable in the training set.)
+
+## How was the model built?
+## How was cross validation used?
+## What is the expected out-of-sample error?
+## What are the classes predicted by the prediction model for 20 different test cases?
+##  
+## The data was separated into a training set for building the model, a test set for the evaluation of the model by cross-validation and for the comparison of different models, and a validation set to calculate the out-of-sample error (accuracy) of the selected model.
+
+## The training set was reduced by removing zero covariates, then by eliminating the values that the authors of the study had calculated for the Euler angles of each of the four sensors. These values were: mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness. At this point, the remaining variables were analyzed to identify their correlation; variables that were highly correlated with others were eliminated.
+
+## A model was created with the tree prediction (rpart) method; this did not produce a satisfactory accuracy. A second version that included pca preprocessing was not acceptable either.
+
+## Another model used was the random forest; the code execution is time consuming and resource intensive, and for this reason some adjustments of the parameters were necessary. The accuracy of this model was much better than the accuracy of the other models; so it was chosen.
+
+## The accuracy of this selected model was calculated with the validation set to provide a measurement of the out-of-sample error; in addition, the classes were predicted by the prediction model for 20 different test cases; these results were provided to the Coursera site and accepted as correct.
+
+
+## Reference Documents
+
+#### Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+[Human Activity Recognition] (http://groupware.les.inf.puc-rio.br/har)
+
+[Qualitative Activity Recognition of Weight Lifting Exercises] (http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf)
+
+[Additional Information] (http://groupware.les.inf.puc-rio.br/har#ixzz3oASyPAq3)
+
+## 
+
+## Loading of packages
+
+```{r message=F, warning=F}
+library(lubridate)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(lattice)
+library(knitr)
+library(curl)
+library(stringr)
+library(xtable)
+library(gridExtra)
+library(caret)
+library(ElemStatLearn)
+library(pgmm)
+library(rpart)
+library(AppliedPredictiveModeling)
+library(kernlab)
+library(corrplot)
+```
+## Step 1 Data Processing
+
+### Loading and preprocessing the data
+
+#### 1.1. Load the data (i.e. read.csv() )
+###### This procedure was tested with a Macintosh
+
+##### 1.1.2 Download the file
+
+###### Set up the URL
+```{r}
+fileURL1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileURL2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+###### Download the files for Windows Mac or other OS
+
+###### Verify the operating system and download
+```{r results="hide"}
+
+if(.Platform$OS.type == "windows"){ ## for windows
+        download.file(url=fileURL1, destfile = "pml-training.csv")}
+if(.Platform$OS.type != "windows"){ ## for Mac, Linux and other OS
+        download.file(url=fileURL1, destfile = "pml-training.csv", 
+                      method="curl")}
+
+
+if(.Platform$OS.type == "windows"){ ## for windows
+        download.file(url=fileURL2, destfile = "pml-testing.csv")}
+if(.Platform$OS.type != "windows"){ ## for Mac, Linux and other OS
+        download.file(url=fileURL2, destfile = "pml-testing.csv", 
+                      method="curl")}
+```
+
+
+##### 1.1.3 Read the file for training
+
+
+```{r}
+data_from_training <- read.csv("pml-training.csv", header = TRUE, na.strings=c("NA", "#DIV/0!"))
+```
+
+###### Check the file
+```{r}
+str(data_from_training)
+dim(data_from_training)
+```
+
+##### 1.1.4 Split the data into training, testing and validation subset
+
+###### 1.1.4.1 Split the data into training and another group
+  
+```{r}
+inTrain <- createDataPartition(y=data_from_training$classe, p=0.6, list=FALSE)
+data_train <- data_from_training[inTrain,]
+data_total_test_from_training <- data_from_training[-inTrain,]
+```
+
+
+####### 1.1.4.2 Create another partition of the 40% of the data, and get 20% testing and 20% validation
+
+
+```{r}
+inValidation <- createDataPartition(data_total_test_from_training$classe, p=0.5, list=FALSE)
+data_test_from_training <- data_total_test_from_training[inValidation,]
+data_validation_from_training <- data_total_test_from_training[-inValidation,]
+```
+###### Check the data separation
+```{r}
+dim(data_train)
+dim(data_test_from_training)
+dim(data_validation_from_training)
+```
+
+##### 1.1.5 Read the file for testing
+```{r}
+data_test <- read.csv("pml-testing.csv", header = TRUE, na.strings=c("NA", "#DIV/0!"))
+```
+
+
+##### 1.1.6 Preprocess training data
+###### Remove zero covariates
+```{r}
+nsv <- nearZeroVar(data_train,saveMetrics=TRUE)
+index_non_zero_features <- !(nsv$nzv)
+```
+###### Select train data with non zero features
+
+```{r}
+data_train_non_zero <- data_train[index_non_zero_features]
+```
+
+##### 1.1.7.1 Perform a similar change for the testing data
+
+```{r}
+data_test_non_zero <- data_test_from_training[index_non_zero_features]
+```
+
+##### 1.1.7.2 Perform a similar change for the validation data
+
+```{r}
+data_validation_non_zero <- data_validation_from_training[index_non_zero_features]
+```
+
+##### 1.1.8 Eliminate derived variables
+###### The authors of the study had calculated variables for the Euler angles of each of the four sensors; these can be eliminated. These variables were: mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness. Their names begin with avg, var, stddev, max, min, amplitude, kurtosis and skewness.
+
+##### 
+```{r}
+data_train_reduced_1 <- select(data_train_non_zero, -starts_with("kurtosis"))
+data_train_reduced_2 <- select(data_train_reduced_1, -starts_with("skewness"))
+data_train_reduced_3 <- select(data_train_reduced_2, -starts_with("min"))
+data_train_reduced_4 <- select(data_train_reduced_3, -starts_with("max"))
+data_train_reduced_5 <- select(data_train_reduced_4, -starts_with("var"))
+data_train_reduced_6 <- select(data_train_reduced_5, -starts_with("stddev"))
+data_train_reduced_7 <- select(data_train_reduced_6, -starts_with("amplitude"))
+data_train_reduced_8 <- select(data_train_reduced_7, -starts_with("avg"))
+```
+
+##### 1.1.9 Eliminate variables non relevant to this study
+
+
+###### Some variables indicate testing intervals and the names of participants
+
+```{r}
+data_train_reduced_9 <- select(data_train_reduced_8, -(X:num_window))
+dim(data_train_reduced_9)
+```
+
+
+
+##### 1.1.10.1 Perform the same changes for the testing data
+######   
+```{r}
+data_test_reduced_1 <- select(data_test_non_zero, -starts_with("kurtosis"))
+data_test_reduced_2 <- select(data_test_reduced_1, -starts_with("skewness"))
+data_test_reduced_3 <- select(data_test_reduced_2, -starts_with("min"))
+data_test_reduced_4 <- select(data_test_reduced_3, -starts_with("max"))
+data_test_reduced_5 <- select(data_test_reduced_4, -starts_with("var"))
+data_test_reduced_6 <- select(data_test_reduced_5, -starts_with("stddev"))
+data_test_reduced_7 <- select(data_test_reduced_6, -starts_with("amplitude"))
+data_test_reduced_8 <- select(data_test_reduced_7, -starts_with("avg"))
+
+data_test_reduced_9 <- select(data_test_reduced_8, -(X:num_window))
+
+dim(data_test_reduced_9)
+```
+
+
+##### 1.1.10.2 Perform the same changes for the validation data
+######   
+```{r}
+data_validation_reduced_1 <- select(data_validation_non_zero, -starts_with("kurtosis"))
+data_validation_reduced_2 <- select(data_validation_reduced_1, -starts_with("skewness"))
+data_validation_reduced_3 <- select(data_validation_reduced_2, -starts_with("min"))
+data_validation_reduced_4 <- select(data_validation_reduced_3, -starts_with("max"))
+data_validation_reduced_5 <- select(data_validation_reduced_4, -starts_with("var"))
+data_validation_reduced_6 <- select(data_validation_reduced_5, -starts_with("stddev"))
+data_validation_reduced_7 <- select(data_validation_reduced_6, -starts_with("amplitude"))
+data_validation_reduced_8 <- select(data_validation_reduced_7, -starts_with("avg"))
+
+data_validation_reduced_9 <- select(data_validation_reduced_8, -(X:num_window))
+
+dim(data_validation_reduced_9)
+```
+
+##### 1.1.11 Analyze the correlation of the variables
+
+```{r}
+corrplot(cor(data_train_reduced_9[,-53]), type = "lower",tl.cex=0.4)
+```
+
+###### Reduce the number of variables on the basis of the correlation 
+```{r}
+data_train_cor <-  cor(data_train_reduced_9[,-53])
+highCorr <- sum(abs(data_train_cor[upper.tri(data_train_cor)]) > .999)
+highCorr
+summary(data_train_cor[upper.tri(data_train_cor)])
+
+highlyCordata_train <- findCorrelation(data_train_cor, cutoff = .75)
+highlyCordata_train
+data_train_reduced_11 <- data_train_reduced_9[,-highlyCordata_train]
+
+dim(data_train_reduced_11)
+names(data_train_reduced_11)
+
+```
+
+####### The result is a dataset data_train_reduced_11 that includes the outcome, and a total of 32 other variables
+
+
+###### Make the same changes to the test data
+
+```{r}
+data_test_reduced_11 <- data_test_reduced_9[,-highlyCordata_train]
+```
+
+###### Make the same changes to the validation data
+
+```{r}
+data_validation_reduced_11 <- data_validation_reduced_9[,-highlyCordata_train]
+```
+
+
+#### 2.1. Evaluate models
+
+##### 2.1.1 The first model is based on trees 
+```{r}
+modFit_rpart <- train(classe ~ ., method="rpart", data = data_train_reduced_11)
+print(modFit_rpart$finalModel)
+```
+
+###### Print the picture 
+
+```{r}
+plot(modFit_rpart$finalModel, uniform=TRUE, 
+     main="Classification Tree")
+text(modFit_rpart$finalModel, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+
+###### View the accuracy in the confusion matrix 
+
+```{r}
+confusionMatrix(data_test_reduced_11$classe,predict(modFit_rpart,data_test_reduced_11))
+```
+
+
+##### 2.1.2 The second model is based on trees with pca preprocessing
+
+```{r}
+modFit_rpart_with_pca <- train(classe ~ ., method="rpart",preProcess="pca", data = data_train_reduced_11)
+print(modFit_rpart_with_pca$finalModel)
+```
+
+###### Print the picture 
+
+```{r}
+plot(modFit_rpart_with_pca$finalModel, uniform=TRUE, 
+     main="Classification Tree")
+text(modFit_rpart_with_pca$finalModel, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+
+###### View the accuracy in the confusion matrix 
+
+```{r}
+confusionMatrix(data_test_reduced_11$classe,predict(modFit_rpart_with_pca,data_test_reduced_11))
+```
+
+##### 2.1.3 The third model is based on random trees
+
+###### The model computation might require adequate resources. We can set up the number of cores; we have a computer with 2, and we want to use only one. In addition, we choose parameters so that the computation is not too intensive. 
+
+
+```{r message=F, warning=F}
+library(doMC)
+registerDoMC(cores=1)
+```
+
+#### Parameters setup
+###### trControl: takes a list of control parameters for the function. The type of resampling as well as the number of resampling iterations can be set using this list. We choose no sampling to save execution time. tuneGrid: can be used to define a specific grid of tuning parameters. We use expand.grid to provide the different values for the number of variables randomly sampled as candidates at each split (mtry).
+```{r}
+fitControl    <- trainControl(method = "none")
+tgrid           <- expand.grid(mtry=c(6)) 
+```
+ 
+
+###### Random Tree Model
+
+
+```{r message=F, warning=F}
+model  <- train(classe ~ ., data = data_train_reduced_11, method = "rf", trControl = fitControl, tuneGrid = tgrid)
+```
+
+###### View the accuracy in the confusion matrix 
+
+```{r}
+confusionMatrix(data_test_reduced_11$classe,predict(model,data_test_reduced_11))
+```
+
+#### 3.1. Select the model
+
+##### We selected the Random Tree Model, because the result of the cross validation is the best, as shown in the accuracy value from the confusion matrix. 
+
+#### 4.1 Expected out-of-sample error for the selected model
+
+##### To calculate the cross validation error of the selected model, we used a dataset that had not been used previously for training or for model evaluation. Accuracy is a metric used for categorical outcomes.
+
+```{r}
+confusionMatrix(data_validation_reduced_11$classe,predict(model,data_validation_reduced_11))
+```
+
+
+#### 5.1 Classes predicted by the prediction model for 20 different test cases
+```{r}
+prediction_model <- predict(model,data_test)
+prediction_model
+```
+###### These results were provided to the Coursera site, and were accepted as correct.
